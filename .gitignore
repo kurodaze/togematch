@@ -1,0 +1,8 @@
+/target
+/data
+*.db
+*.db-*
+*cookies*.txt
+/togematch-api
+/togematch-api-*
+/togematch-api.tmp

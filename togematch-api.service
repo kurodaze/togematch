@@ -1,0 +1,20 @@
+[Unit]
+Description=togematch YouTube audio matcher API
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/togematch
+ExecStart=%h/togematch/togematch-api --port 7094
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

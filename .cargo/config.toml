@@ -1,0 +1,6 @@
+[build]
+target-dir = "target"
+
+# rust-version is the library's promise to its users; the API builds with the latest Rust
+[resolver]
+incompatible-rust-versions = "allow"

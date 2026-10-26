@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+*.db
+*.db-*
+*cookies*.txt
+*.tmp
+*.log

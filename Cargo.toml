@@ -1,0 +1,29 @@
+[package]
+name = "togematch"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.88"
+license.workspace = true
+description = "Finds a track's official audio upload on YouTube"
+repository.workspace = true
+keywords = ["youtube", "spotify", "music", "matching"]
+categories = ["multimedia::audio"]
+include = ["src/**/*", "README.md", "LICENSE"]
+
+[workspace]
+members = ["api"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/kurodaze/togematch"
+
+[profile.release]
+lto = "fat"
+strip = true
+panic = "abort"
+codegen-units = 1
+
+[profile.dev]
+debug = 1

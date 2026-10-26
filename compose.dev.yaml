@@ -1,0 +1,18 @@
+services:
+  togematch-api:
+    build:
+      context: .
+      args:
+        PROFILE: dev
+    container_name: togematch-api-dev
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "7094:7094"
+    volumes:
+      - data:/app/data
+
+volumes:
+  data:

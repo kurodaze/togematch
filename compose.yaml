@@ -1,0 +1,15 @@
+services:
+  togematch-api:
+    image: ghcr.io/kurodaze/togematch:latest
+    container_name: togematch-api
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "7094:7094"
+    volumes:
+      - data:/app/data
+
+volumes:
+  data:
