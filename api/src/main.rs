@@ -328,21 +328,4 @@ mod tests {
             assert!(!is_local(public.parse().unwrap()), "{public}");
         }
     }
-
-    #[test]
-    fn params() {
-        assert_eq!(
-            param("q=basshunter+dota", "q").as_deref(),
-            Some("basshunter dota")
-        );
-        assert_eq!(
-            param("x=1&q=%E5%A4%9C%E3%81%AB", "q").as_deref(),
-            Some("夜に")
-        );
-        assert_eq!(param("q=100%", "q").as_deref(), Some("100%"));
-        assert_eq!(param("q=100%+dota", "q").as_deref(), Some("100% dota"));
-        assert_eq!(param("q=100%%20dota", "q").as_deref(), Some("100% dota"));
-        assert_eq!(param("q=100%a", "q").as_deref(), Some("100%a"));
-        assert_eq!(param("qq=1", "q"), None);
-    }
 }

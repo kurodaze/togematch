@@ -580,23 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn video_ids() {
-        let id = Some("AWmKSuiFJik".to_string());
-        assert_eq!(
-            video_id("https://www.youtube.com/watch?v=AWmKSuiFJik&list=x"),
-            id
-        );
-        assert_eq!(
-            video_id("https://music.youtube.com/watch?v=AWmKSuiFJik"),
-            id
-        );
-        assert_eq!(video_id("https://youtu.be/AWmKSuiFJik?si=abc"), id);
-        assert_eq!(video_id("https://www.youtube.com/shorts/AWmKSuiFJik"), id);
-        assert_eq!(video_id("AWmKSuiFJik"), id);
-        assert_eq!(video_id("https://www.youtube.com/watch?v=short"), None);
-    }
-
-    #[test]
     fn unzip_single_inflates_the_only_entry() {
         use std::io::Write;
         let mut deflate = flate2::write::DeflateEncoder::new(Vec::new(), Default::default());

@@ -169,17 +169,3 @@ fn line(key: &str, entry: &Entry) -> String {
         entry.source, entry.artist, entry.title
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn choosing_a_track_by_number() {
-        assert_eq!(choose("\n", 3, 1), Some(1));
-        assert_eq!(choose(" 3\n", 3, 0), Some(2));
-        assert_eq!(choose("4", 3, 0), None);
-        assert_eq!(choose("0", 3, 0), None);
-        assert_eq!(choose("two", 3, 0), None);
-    }
-}

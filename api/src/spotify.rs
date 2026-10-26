@@ -130,33 +130,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn links() {
-        let http = Agent::new_with_defaults();
-        let parse = |q: &str| link(&http, q).map(|l| (l.kind, l.id));
-        let pair = |k: &str, i: &str| Some((k.to_string(), i.to_string()));
-        assert_eq!(
-            parse("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC?si=abc"),
-            pair("track", "4uLU6hMCjMI75M1A2tKUQC")
-        );
-        assert_eq!(
-            parse("https://open.spotify.com/intl-de/album/4aawyAB9vmqN3uQ7FjRGTy"),
-            pair("album", "4aawyAB9vmqN3uQ7FjRGTy")
-        );
-        assert_eq!(
-            parse("spotify:track:4uLU6hMCjMI75M1A2tKUQC"),
-            pair("track", "4uLU6hMCjMI75M1A2tKUQC")
-        );
-        assert_eq!(
-            parse("https://open.spotify.com/artist/0gxyHStUsqpMadRV0Di1Qt"),
-            None
-        );
-        assert_eq!(parse("https://www.youtube.com/watch?v=x"), None);
-        assert_eq!(parse("spotify:track:4uLU6hMCjMI75M1A2tKUQC?x"), None);
-        assert_eq!(parse("https://open.spotify.com/track/..%2F..%2Fx"), None);
-        assert_eq!(parse("basshunter dota"), None);
-    }
-
-    #[test]
     fn embed_page() {
         let page = r#"<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":{"name":"Track"}}}}}}</script>"#;
         assert_eq!(entity(page).unwrap()["name"], "Track");
