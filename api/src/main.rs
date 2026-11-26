@@ -279,17 +279,22 @@ fn param(query: &str, name: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Finds a cookies file in `data/`, checking standard names first then any `*cookie*.txt` file.
+/// Finds a non-empty cookies file in `data/`, checking standard names first then any `*cookie*.txt` file.
 pub fn find_cookies() -> Option<String> {
-    for path in ["data/cookies.txt", "data/youtube-cookies.txt"] {
-        if std::path::Path::new(path).is_file() {
+    let non_empty = |p: &std::path::Path| p.is_file() && p.metadata().is_ok_and(|m| m.len() > 0);
+    for path in [
+        "data/cookies.txt",
+        "data/youtube-cookies.txt",
+        "data/www.youtube.com_cookies.txt",
+    ] {
+        if non_empty(std::path::Path::new(path)) {
             return Some(path.into());
         }
     }
     let entries = std::fs::read_dir("data").ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file()
+        if non_empty(&path)
             && let Some(name) = path.file_name().and_then(|n| n.to_str())
         {
             let lower = name.to_lowercase();

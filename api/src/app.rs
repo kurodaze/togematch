@@ -252,24 +252,24 @@ impl App {
                 );
             }
         }
-        // someone else's upload only when YouTube Music has no official one either
+        // A plain YouTube search often hides OAC Art Tracks behind the artist's music video,
+        // so consult YouTube Music unless the search already found a licensed master.
         let hit = match togematch::best(&track, &results).cloned() {
-            Some(hit) if togematch::is_official(&track, &hit) => {
-                debug!("official match: {} ({:?})", hit.id, hit.title);
+            Some(hit) if togematch::is_licensed(&hit) => {
+                debug!("licensed match: {} ({:?})", hit.id, hit.title);
                 Some(hit)
             }
             other => {
-                debug!("no official match in search results, checking YouTube Music...");
-                let music = self.music_upload(&track);
-                if let Some(m) = &music {
-                    debug!("YouTube Music matched: {} ({:?})", m.id, m.title);
-                } else if let Some(o) = &other {
-                    debug!(
-                        "YouTube Music had no match, falling back to unofficial: {}",
-                        o.id
-                    );
+                debug!("no licensed Art Track in search results, checking YouTube Music...");
+                let mut pool: Vec<togematch::Candidate> =
+                    self.music_upload(&track).into_iter().collect();
+                if let Some(m) = pool.first() {
+                    debug!("YouTube Music candidate: {} ({:?})", m.id, m.title);
                 }
-                music.or(other)
+                if let Some(prev) = other {
+                    pool.push(prev);
+                }
+                togematch::best(&track, &pool).cloned()
             }
         };
         let entry = match &hit {
@@ -418,33 +418,56 @@ impl App {
                     );
                 }
             }
-            if let Some(hit) =
-                togematch::best(&meant.track, &results).filter(|hit| confirmed(meant, hit))
-            {
+            let best_search = togematch::best(&meant.track, &results)
+                .filter(|hit| confirmed(meant, hit))
+                .cloned();
+            let hit = match best_search {
+                Some(hit) if togematch::is_licensed(&hit) => Some(hit),
+                other => {
+                    debug!("no licensed Art Track in search results, checking YouTube Music...");
+                    let mut pool: Vec<togematch::Candidate> = self
+                        .music_upload(&meant.track)
+                        .filter(|hit| confirmed(meant, hit))
+                        .into_iter()
+                        .collect();
+                    if let Some(prev) = other {
+                        pool.push(prev);
+                    }
+                    togematch::best(&meant.track, &pool).cloned()
+                }
+            };
+            if let Some(hit) = &hit {
                 debug!("picked match: {} ({:?})", hit.id, hit.title);
                 return Ok(matched(meant, hit));
             }
         }
-        let results = youtube::search(&self.ytdlp, &[format!("ytsearch1:{text}")])?;
+        let art_query = togematch::art_track_query(text);
+        let (plain_top, mut art_hits) =
+            youtube::search_fallback(&self.ytdlp, text, art_query.as_deref())?;
         // YouTube's search drops symbols: its top result for "bring me the horizon ¿" is any of
         // their tracks, so it has to carry them
         let symbols = togematch::symbols(text);
-        let top = results.first().filter(|top| {
+        let top = plain_top.as_ref().filter(|top| {
             let names = format!("{} {}", top.title, top.uploader).to_lowercase();
             symbols.iter().all(|s| names.contains(&s.to_lowercase()))
         });
+        if let Some(t) = top
+            && !art_hits.iter().any(|c| c.id == t.id)
+        {
+            art_hits.push(t.clone());
+        }
+        if let Some((hit, track)) = togematch::art_track(text, &art_hits, top) {
+            debug!(
+                "picked Art Track directly: {} ({:?} - {:?})",
+                hit.id, track.artist, track.name
+            );
+            let entry = entry(&track, Some(&hit.id), "match");
+            self.cache.unalias(&key);
+            self.cache.put(&key, &entry);
+            return Ok(found(entry, false));
+        }
         if let Some(t) = top {
             debug!("top YouTube result: {} ({:?})", t.id, t.title);
-        }
-        // nothing there either: the track may still be on YouTube Music
-        if top.is_none()
-            && let Some(meant) = &meant
-            && let Some(hit) = self
-                .music_upload(&meant.track)
-                .filter(|hit| confirmed(meant, hit))
-        {
-            debug!("YouTube Music fallback hit: {} ({:?})", hit.id, hit.title);
-            return Ok(matched(meant, &hit));
         }
         let entry = match top {
             Some(top) => Entry {

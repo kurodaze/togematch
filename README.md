@@ -11,14 +11,14 @@ Used by [musicart](https://github.com/kurodaze/musicart) and [togewire](https://
 
 ## How it matches
 
-- **Spotify links**: the track's title, artists, length and explicit flag come from Spotify's public embed page (no API keys). Albums and playlists list their tracks, each matched when asked for on its own.
-- **Searches**: Deezer's public search turns the text into a track, the most popular one containing every word you typed, with one typo allowed in a longer word. "r906 no nein disco" becomes r-906's No Nein Disco (feat. IA AI). Symbols typed on their own must be there as they are ("bring me the horizon ¿" is the track ¿), and also in YouTube's top result, since YouTube's search ignores them. A live version, remix or instrumental is picked only when typed or when nothing else fits, and a karaoke or cover release never is. Deezer lists many Japanese releases under romanised names (結束バンド is kessoku band), so typed words it lacks are confirmed by the upload's own names or by YouTube Music listing the same upload. Text that isn't a track ("funny cat video") gets YouTube's top result, as if typed into YouTube.
-- **Matching**: one flat yt-dlp search with a few queries: plain, restricted to licensed uploads, and in katakana for romanised Japanese titles. Every result is scored on title words, version words (live, remix, karaoke, instrumental...), whether the artist's channel or a licensed credit is behind it, and how close its length is. A result that's a different track or version is rejected outright. When that finds no match, YouTube Music's song search is tried too, since it reaches official uploads a signed-out YouTube search sometimes hides.
-- **Remembering**: matches are stored per recording, by ISRC when Deezer knows the track. The Spotify link for No Nein Disco, "r-906 no nein disco" and "no nein disco" are the same recording, so they share one YouTube search.
+- **Spotify links**: Title, artists, length, and explicit flag are read from Spotify's public embed page (no API keys). Albums and playlists list their tracks as `pending`, each matched on demand.
+- **Searches**: Deezer's public search resolves the text to the most popular track containing every typed word (allowing one typo in longer words, e.g. `"r906 no nein disco"` → *r-906 - No Nein Disco (feat. IA AI)*) and preserving standalone symbols (`"bring me the horizon ¿"`). Live, remix, acoustic, demo, and instrumental versions are only picked when asked for or when nothing else fits; karaoke and covers are rejected. Romanised or translated Japanese names are confirmed against the upload's own metadata or YouTube Music, and tracks Deezer doesn't list are checked against licensed `"Provided to YouTube by"` uploads before falling back to YouTube's top result (e.g. `"funny cat video"`).
+- **Matching**: Runs a single flat yt-dlp search across plain, licensed-only, and katakana queries, scoring results on title, version tags, channel/credit, and duration while rejecting mismatches outright. Unless that already finds a licensed upload (`"Provided to YouTube by"` or a `"- Topic"` channel), YouTube Music is searched too to surface studio masters hidden behind music videos.
+- **Remembering**: Matches are stored per recording (by ISRC when Deezer knows it), so a Spotify link and text searches for the same track share one YouTube lookup.
 
 ## API
 
-Needs a residential internet connection, or [YouTube cookies](#are-you-a-bot) (required for VPS/datacenter IPs, where YouTube blocks signed-out requests).
+Runs on Linux (`x86_64` or `aarch64`), on a residential connection or with [YouTube cookies](#are-you-a-bot) (required on VPS/datacenter IPs, where YouTube blocks signed-out requests).
 
 ### 1. Run via Podman / Docker (Recommended)
 
@@ -29,15 +29,6 @@ podman compose up -d   # with compose.yaml from this repo
 # or: docker compose up -d
 ```
 
-Or run directly:
-```bash
-# Podman
-podman run -d --name togematch-api --restart unless-stopped --init -p 7094:7094 -v togematch:/app/data ghcr.io/kurodaze/togematch:latest
-
-# Docker
-docker run -d --name togematch-api --restart unless-stopped --init -p 7094:7094 -v togematch:/app/data ghcr.io/kurodaze/togematch:latest
-```
-
 `compose.dev.yaml` builds the image from the checkout instead, with the faster-to-build dev profile.
 
 To give the container cookies, stream them into the data volume:
@@ -46,7 +37,7 @@ docker exec -i togematch-api sh -c 'cat > /app/data/cookies.txt && chmod 600 /ap
 # or with Podman:
 podman exec -i togematch-api sh -c 'cat > /app/data/cookies.txt && chmod 600 /app/data/cookies.txt' < path/to/cookies.txt
 ```
-The API automatically detects `cookies.txt` (or any `*cookie*.txt`) in the data volume.
+togematch-api automatically detects `cookies.txt` (or any `*cookie*.txt`) in `data/`, including when added or replaced while running.
 
 ### 2. Or Install Native Binary
 
@@ -134,7 +125,7 @@ A fix applies to the recording, so to every way of asking for it. When a search 
 ## Library
 
 ```toml
-togematch = "0.1"
+togematch = "0.2"
 ```
 
 ```rust

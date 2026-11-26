@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use togematch::Candidate;
 use tracing::{debug, error, info, warn};
 
-pub const YTDLP_BIN: &str = "data/bin/yt-dlp";
-pub const DENO_BIN: &str = "data/bin/deno";
+const YTDLP_BIN: &str = "data/bin/yt-dlp";
+const DENO_BIN: &str = "data/bin/deno";
 
 const TIMEOUT: Duration = Duration::from_secs(90);
 /// Long enough to download a new release on a slow connection.
@@ -45,7 +45,8 @@ static UPDATES_OFF: AtomicBool = AtomicBool::new(false);
 /// yt-dlp rewrites its cookies file when it's done, so a run starting meanwhile could read it
 /// half written. Each run gets its own copy, and copies go in and out one at a time.
 static COOKIES: Mutex<()> = Mutex::new(());
-pub static ACTIVE_COOKIES: Mutex<Option<String>> = Mutex::new(None);
+static ACTIVE_COOKIES: Mutex<Option<String>> = Mutex::new(None);
+static COOKIES_DEAD: AtomicBool = AtomicBool::new(false);
 /// How long the cookies are used after YouTube asks to sign in.
 const LOGGED_IN_FOR: Duration = Duration::from_secs(3600);
 /// When YouTube last asked to sign in.
@@ -91,7 +92,7 @@ pub fn keep_updated() {
 /// Runs yt-dlp's own updater, unless it ran less than `gap` ago. True if a new version came
 /// in, then or within `gap`. One not downloaded yet comes new on first use anyway.
 fn update(gap: Duration) -> bool {
-    if UPDATES_OFF.load(Ordering::Relaxed) || !Path::new(YTDLP_BIN).is_file() {
+    if UPDATES_OFF.load(Ordering::Relaxed) || !usable_bin(YTDLP_BIN) {
         return false;
     }
     let mut last = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
@@ -139,6 +140,48 @@ pub fn search(ytdlp: &Ytdlp, targets: &[String]) -> Result<Vec<Candidate>, Strin
     run(ytdlp, targets, true, PER_TARGET)
 }
 
+/// Runs a plain `ytsearch1` alongside an optional Art Track `ytsearch` in one yt-dlp call,
+/// separating their rows so the second target cannot stand in for an empty first.
+pub fn search_fallback(
+    ytdlp: &Ytdlp,
+    text: &str,
+    art_track_target: Option<&str>,
+) -> Result<(Option<Candidate>, Vec<Candidate>), String> {
+    let plain_target = format!("ytsearch1:{text}");
+    let Some(art_target) = art_track_target else {
+        let rows = run(ytdlp, &[plain_target], true, PER_TARGET)?;
+        return Ok((rows.into_iter().next(), Vec::new()));
+    };
+    let targets = [plain_target, art_target.to_string()];
+    let rows = run_tagged(ytdlp, &targets, true, PER_TARGET)?;
+    let plain_key = text.trim();
+    let art_key = art_target
+        .split_once(':')
+        .map_or(art_target, |(_, q)| q)
+        .trim();
+    Ok(split_fallback_rows(rows, plain_key, art_key))
+}
+
+fn split_fallback_rows(
+    rows: Vec<(Option<String>, Candidate)>,
+    plain_key: &str,
+    art_key: &str,
+) -> (Option<Candidate>, Vec<Candidate>) {
+    let mut plain_top = None;
+    let mut art_hits = Vec::new();
+    for (playlist, candidate) in rows {
+        match playlist.as_deref().map(str::trim) {
+            Some(p) if p == plain_key && plain_top.is_none() => plain_top = Some(candidate),
+            Some(p) if p == art_key || p.to_lowercase().contains("\"provided to youtube by\"") => {
+                art_hits.push(candidate);
+            }
+            _ if plain_top.is_none() => plain_top = Some(candidate),
+            _ => art_hits.push(candidate),
+        }
+    }
+    (plain_top, art_hits)
+}
+
 /// YouTube Music's first songs for the track, with the channel, credit and length the
 /// matcher needs, which its flat rows lack.
 pub fn music_details(ytdlp: &Ytdlp, track: &togematch::Track) -> Result<Vec<Candidate>, String> {
@@ -152,6 +195,18 @@ fn run(
     flat: bool,
     per_target: usize,
 ) -> Result<Vec<Candidate>, String> {
+    Ok(run_tagged(ytdlp, targets, flat, per_target)?
+        .into_iter()
+        .map(|(_, c)| c)
+        .collect())
+}
+
+fn run_tagged(
+    ytdlp: &Ytdlp,
+    targets: &[String],
+    flat: bool,
+    per_target: usize,
+) -> Result<Vec<(Option<String>, Candidate)>, String> {
     let mut updated = false;
     loop {
         let logged_in = ytdlp.logged_in();
@@ -181,7 +236,7 @@ fn run_once(
     flat: bool,
     per_target: usize,
     logged_in: bool,
-) -> Result<Vec<Candidate>, String> {
+) -> Result<Vec<(Option<String>, Candidate)>, String> {
     let start = Instant::now();
     debug!(
         "yt-dlp querying {} target(s) (flat={flat}, limit={per_target}): {:?}",
@@ -227,9 +282,11 @@ fn run_once(
     if let Some(cookies) = &cookies {
         cookies.save();
     }
-    let rows: Vec<Candidate> = String::from_utf8_lossy(&out.stdout)
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    check_cookies(ytdlp, &stderr);
+    let rows: Vec<(Option<String>, Candidate)> = String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter_map(candidate)
+        .filter_map(candidate_tagged)
         .collect();
     debug!(
         "yt-dlp returned {} candidate(s) in {:.2}s",
@@ -237,7 +294,6 @@ fn run_once(
         start.elapsed().as_secs_f32()
     );
     if rows.is_empty() && !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
         let error = stderr
             .lines()
             .rfind(|l| l.starts_with("ERROR:"))
@@ -263,10 +319,10 @@ fn ensure_tools() -> Result<&'static str, String> {
             .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("deno").is_file()))
     });
     static JS_RUNTIME: OnceLock<String> = OnceLock::new();
-    if !Path::new(YTDLP_BIN).is_file() || (!*SYSTEM_DENO && !Path::new(DENO_BIN).is_file()) {
+    if !usable_bin(YTDLP_BIN) || (!*SYSTEM_DENO && !usable_bin(DENO_BIN)) {
         let mut last = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
         let arch = std::env::consts::ARCH;
-        if !Path::new(YTDLP_BIN).is_file() {
+        if !usable_bin(YTDLP_BIN) {
             // Each build runs only on its own libc (gcompat is not enough). The system
             // ldd names it, as in detect-libc; a stray musl loader (musl-tools) does not.
             let musl = fs::read_to_string("/usr/bin/ldd").is_ok_and(|s| s.contains("musl"));
@@ -283,7 +339,7 @@ fn ensure_tools() -> Result<&'static str, String> {
             UPDATES_OFF.store(false, Ordering::Relaxed);
             last.0 = Some(Instant::now());
         }
-        if !*SYSTEM_DENO && !Path::new(DENO_BIN).is_file() {
+        if !*SYSTEM_DENO && !usable_bin(DENO_BIN) {
             let name = format!("deno-{arch}-unknown-linux-gnu.zip");
             let url = format!("https://github.com/denoland/deno/releases/latest/download/{name}");
             let zip = download_verified(&url, &format!("{url}.sha256sum"), &name)?;
@@ -301,6 +357,49 @@ fn ensure_tools() -> Result<&'static str, String> {
         spec
     });
     Ok(spec.as_str())
+}
+
+/// True if `path` exists and, when it is a dynamically linked ELF64 binary, its loader (`PT_INTERP`)
+/// exists on this host (so a musl binary from a container is replaced on a glibc host and vice versa).
+fn usable_bin(path: &str) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let mut head = Vec::new();
+    if file.take(4096).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    elf_interp(&head).is_none_or(|interp| Path::new(interp).exists())
+}
+
+/// The `PT_INTERP` path of a little-endian ELF64 binary if it lies within `head`.
+fn elf_interp(head: &[u8]) -> Option<&str> {
+    if head.len() < 64 || &head[0..4] != b"\x7fELF" || head[4] != 2 || head[5] != 1 {
+        return None;
+    }
+    let u16_at = |i: usize| Some(u16::from_le_bytes(head.get(i..i + 2)?.try_into().ok()?));
+    let u32_at = |i: usize| Some(u32::from_le_bytes(head.get(i..i + 4)?.try_into().ok()?));
+    let u64_at = |i: usize| Some(u64::from_le_bytes(head.get(i..i + 8)?.try_into().ok()?));
+    let phoff = usize::try_from(u64_at(32)?).ok()?;
+    let phentsize = usize::from(u16_at(54)?);
+    let phnum = usize::from(u16_at(56)?);
+    if phentsize < 56 {
+        return None;
+    }
+    for i in 0..phnum {
+        let off = phoff.checked_add(i.checked_mul(phentsize)?)?;
+        if u32_at(off)? == 3 {
+            let start = usize::try_from(u64_at(off + 8)?).ok()?;
+            let size = usize::try_from(u64_at(off + 32)?).ok()?;
+            let bytes = head.get(start..start.checked_add(size)?)?;
+            let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+            return std::str::from_utf8(&bytes[..end]).ok();
+        }
+    }
+    None
 }
 
 /// Runs a command to its end, reading both pipes meanwhile so a full one can't stall it, or
@@ -370,8 +469,8 @@ impl<'a> Cookies<'a> {
         Ok(cookies)
     }
 
-    /// Hands what yt-dlp learned back to the file, unless it was replaced meanwhile, by hand or
-    /// by another run: that copy is as new.
+    /// Hands what yt-dlp learned back to the file atomically, unless it was replaced meanwhile,
+    /// by hand or by another run: that copy is as new.
     fn save(&self) {
         let Ok(learned) = fs::read(&self.copy) else {
             return;
@@ -380,11 +479,37 @@ impl<'a> Cookies<'a> {
             return;
         }
         let _turn = COOKIES.lock().unwrap_or_else(PoisonError::into_inner);
-        if fs::read(self.file).is_ok_and(|now| now == self.read)
-            && let Err(e) = fs::write(self.file, learned)
-        {
+        if !fs::read(self.file).is_ok_and(|now| now == self.read) {
+            return;
+        }
+        let tmp = format!("{}.tmp", self.file);
+        let _ = fs::remove_file(&tmp);
+        let write = (|| -> io::Result<()> {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&tmp)?;
+            file.write_all(&learned)?;
+            file.sync_all()?;
+            fs::rename(&tmp, self.file)
+        })();
+        if let Err(e) = write {
+            let _ = fs::remove_file(&tmp);
             warn!("cookies: couldn't save {}: {e}", self.file);
         }
+    }
+}
+
+fn check_cookies(ytdlp: &Ytdlp, stderr: &str) {
+    if (stderr.contains("cookies are no longer valid")
+        || stderr.contains("Your cookies are expired"))
+        && !COOKIES_DEAD.swap(true, Ordering::Relaxed)
+    {
+        let file = ytdlp.cookies_file().unwrap_or_default();
+        warn!(
+            "cookies: YouTube no longer accepts the ones in {file}. Export new ones, see the README"
+        );
     }
 }
 
@@ -527,20 +652,29 @@ fn hex(bytes: &[u8]) -> String {
         })
 }
 
-fn candidate(line: &str) -> Option<Candidate> {
+fn candidate_tagged(line: &str) -> Option<(Option<String>, Candidate)> {
     let v: Value = serde_json::from_str(line).ok()?;
     let text = |k: &str| v[k].as_str().unwrap_or_default().to_string();
     let id = text("id");
     let uploader = Some(text("uploader"))
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| text("channel"));
-    (!id.is_empty()).then(|| Candidate {
-        id,
-        title: text("title"),
-        uploader,
-        description: text("description"),
-        album: text("album"),
-        duration: (v["duration"].as_f64().unwrap_or(0.0) * 1000.0) as i64,
+    let playlist = v["playlist"]
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    (!id.is_empty()).then(|| {
+        (
+            playlist,
+            Candidate {
+                id,
+                title: text("title"),
+                uploader,
+                description: text("description"),
+                album: text("album"),
+                duration: (v["duration"].as_f64().unwrap_or(0.0) * 1000.0) as i64,
+            },
+        )
     })
 }
 
@@ -610,5 +744,51 @@ b6ce97646773070d7a7ffd6bbbdcaecb47c48483909c54c915bf08a7a9b5e0b1  yt-dlp_linux_a
             parse_sha256sums(bare, "deno.zip").as_deref(),
             Some("6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae")
         );
+    }
+
+    #[test]
+    fn fallback_rows_keep_plain_and_art_track_targets_separate() {
+        let c = |id: &str| Candidate {
+            id: id.into(),
+            ..Default::default()
+        };
+        let art_q = "RetBear 頭ん中DEAD END \"provided to youtube by\"";
+        let (plain, art) = split_fallback_rows(
+            vec![
+                (Some("RetBear 頭ん中DEAD END".into()), c("mv")),
+                (Some(art_q.into()), c("art1")),
+                (Some(art_q.into()), c("art2")),
+            ],
+            "RetBear 頭ん中DEAD END",
+            art_q,
+        );
+        assert_eq!(plain.map(|x| x.id).as_deref(), Some("mv"));
+        let art_ids: Vec<&str> = art.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(art_ids, vec!["art1", "art2"]);
+
+        // An empty plain ytsearch1 must stay None even when the Art Track search returns rows.
+        let (plain, art) = split_fallback_rows(
+            vec![(Some(art_q.into()), c("art1"))],
+            "RetBear 頭ん中DEAD END",
+            art_q,
+        );
+        assert!(plain.is_none());
+        assert_eq!(art.len(), 1);
+    }
+
+    #[test]
+    fn elf_interp_reads_loader_path() {
+        let mut elf = vec![0u8; 256];
+        elf[0..6].copy_from_slice(b"\x7fELF\x02\x01");
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+        elf[64..68].copy_from_slice(&3u32.to_le_bytes());
+        let interp = b"/lib/ld-musl-x86_64.so.1\0";
+        elf[64 + 8..64 + 16].copy_from_slice(&128u64.to_le_bytes());
+        elf[64 + 32..64 + 40].copy_from_slice(&(interp.len() as u64).to_le_bytes());
+        elf[128..128 + interp.len()].copy_from_slice(interp);
+        assert_eq!(elf_interp(&elf), Some("/lib/ld-musl-x86_64.so.1"));
+        assert_eq!(elf_interp(b"#!/bin/sh\n"), None);
     }
 }
