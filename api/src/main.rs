@@ -128,7 +128,8 @@ fn main() -> ExitCode {
     let app = Arc::new(app);
     youtube::keep_updated();
     info!(
-        "togematch-api: listening on port {} for the local network",
+        "togematch-api v{} listening on port {} for the local network",
+        env!("CARGO_PKG_VERSION"),
         args.port
     );
     if let Some(path) = app.ytdlp.cookies_file() {
