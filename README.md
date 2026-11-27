@@ -22,16 +22,17 @@ Runs on Linux (`x86_64` or `aarch64`), on a residential connection or with [YouT
 
 ### 1. Run via Podman / Docker (Recommended)
 
-The image has deno, fetches yt-dlp into its data volume on first use, and keeps its database there too.
+The image has deno, fetches yt-dlp into `data/` on first use, and keeps its database and cookies file there too. It runs as `1000:1000` (`user:` in `compose.yaml`), which must own `data/`: use your own `id -u`:`id -g` if those differ. Create `data/` before the first start, or Docker creates it owned by root.
 
 ```bash
-podman compose up -d   # with compose.yaml from this repo
+mkdir -p data
+podman compose up -d   # rootless Podman: uncomment userns_mode in compose.yaml
 # or: docker compose up -d
 ```
 
 `compose.dev.yaml` builds the image from the checkout instead, with the faster-to-build dev profile.
 
-To give the container cookies, stream them into the data volume:
+To give the container cookies, save them into `data/` (e.g. `data/cookies.txt` or `data/www.youtube.com_cookies.txt`), or stream them into a running container:
 ```bash
 docker exec -i togematch-api sh -c 'cat > /app/data/cookies.txt && chmod 600 /app/data/cookies.txt' < path/to/cookies.txt
 # or with Podman:
@@ -150,7 +151,7 @@ YouTube blocks signed-out requests from datacenter/VPS addresses and sometimes a
 1. In a private/incognito window, log into YouTube and go to `https://www.youtube.com/robots.txt` in the same tab.
 2. Export the youtube.com cookies in Netscape cookies.txt format, e.g. with the "Get cookies.txt LOCALLY" extension (allow it in private windows), and save it into the `data/` folder (e.g. `data/cookies.txt` or `data/www.youtube.com_cookies.txt`).
 3. Close the private window without logging out, or the cookies stop working.
-4. togematch-api automatically finds and loads cookie files in `data/` (including when added or replaced while running) and logs `using YouTube cookies from ...`. In a container, stream them into the data volume:
+4. togematch-api automatically finds and loads cookie files in `data/` (including when added or replaced while running) and logs `using YouTube cookies from ...`. In a container, `data/` is the folder mounted from `compose.yaml`, or stream them into a running container:
    ```bash
    docker exec -i togematch-api sh -c 'cat > /app/data/cookies.txt && chmod 600 /app/data/cookies.txt' < path/to/cookies.txt
    # or with Podman:

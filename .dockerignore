@@ -1,8 +1,12 @@
 target/
 .git/
 .github/
+.cargo/
+data/
 *.db
 *.db-*
 *cookies*.txt
+togematch-api
+togematch-api-*
 *.tmp
 *.log
